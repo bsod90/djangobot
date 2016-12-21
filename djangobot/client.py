@@ -99,10 +99,16 @@ class SlackClientProtocol(WebSocketClientProtocol):
         Note: The slack API only sends JSON, isBinary will always be false.
         """
         msg = self.translate(unpack(payload))
+        msg['self'] = {
+            'id': self.me['id'],
+            'name': self.me['name']
+        }
         if 'type' in msg:
             channel_name = 'slack.{}'.format(msg['type'])
             print('Sending on {}'.format(channel_name))
-            channels.Channel(channel_name).send({'text': pack(msg)})
+            channels.Channel(channel_name).send({
+                'text': pack(msg),
+            })
 
     def sendSlack(self, message):
         """
@@ -164,6 +170,7 @@ class Client(object):
         # Attach attributes
         factory.protocol = SlackClientProtocol
         factory.protocol.slack = slack
+        factory.protocol.me = rtm['self']
         factory.protocol.channel_layer = self.channel_layer
         factory.channel_name = self.channel_name
 

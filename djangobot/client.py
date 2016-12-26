@@ -1,12 +1,15 @@
 import json
+import logging
 
+from twisted.internet.protocol import ReconnectingClientFactory
 from autobahn.twisted.websocket import (WebSocketClientProtocol,
-    WebSocketClientFactory, connectWS)
+                                        WebSocketClientFactory, connectWS)
 import channels
 from twisted.internet import reactor, ssl
-from twisted.internet.ssl import ClientContextFactory
 
 from .slack import SlackAPI
+
+logger = logging.getLogger(__name__)
 
 
 def pack(message):
@@ -18,6 +21,7 @@ def pack(message):
         message: {dict} dictionary that full specifies a slack message
     """
     return json.dumps(message).encode('utf8')
+
 
 def unpack(text):
     """
@@ -34,6 +38,7 @@ class SlackClientProtocol(WebSocketClientProtocol):
     This defines how messages from Slack are passed onto
     Channels and how a specific channel is passed to Slack
     """
+
     def __init__(self, *args, **kwargs):
         super(SlackClientProtocol, self).__init__(*args, **kwargs)
         self._message_id = 0
@@ -118,7 +123,7 @@ class SlackClientProtocol(WebSocketClientProtocol):
         self.sendMessage(self.make_message(message['text'], channel))
 
 
-class SlackClientFactory(WebSocketClientFactory):
+class SlackClientFactory(WebSocketClientFactory, ReconnectingClientFactory):
 
     def run(self):
         if self.isSecure:
@@ -134,11 +139,20 @@ class SlackClientFactory(WebSocketClientFactory):
         """
         Get available messages and send through to the protocol
         """
-        channel, message = self.protocol.channel_layer.receive_many([u'slack.send'], block=False)
+        channel, message = self.protocol.channel_layer.receive_many(
+            [u'slack.send'], block=False)
         delay = 0.1
         if channel:
             self.protocols[0].sendSlack(message)
         reactor.callLater(delay, self.read_channel)
+
+    def clientConnectionFailed(self, connector, reason):
+        logger.info("Client connection failed .. retrying ..")
+        self.retry(connector)
+
+    def clientConnectionLost(self, connector, reason):
+        logger.info("Client connection lost .. retrying ..")
+        self.retry(connector)
 
 
 class Client(object):
@@ -149,9 +163,10 @@ class Client(object):
     def __init__(self, channel_layer, token, channel_name=u'slack.send'):
         """
         Args:
-            channel_layer: channel layer on which this client will communicate to Django
-            token: {str} Slack token
-            channel_name: {str} channel name to send messages that will come back to slack
+            channel_layer: channel layer on which this client will
+            communicate to Django token: {str} Slack token
+            channel_name: {str} channel name to send messages
+            that will come back to slack
         """
         self.channel_layer = channel_layer
         self.token = token
